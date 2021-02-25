@@ -10,9 +10,9 @@
 
 /*
  * Slightly modified version of I2S library: https://github.com/schreibfaul1/ESP32-audioI2S
- * 
+ * Replace original src files with the ones attached to this project
  */
-#include "Audio.h"
+#include <Audio.h>
 
 
 // ---- CONFIG ----
