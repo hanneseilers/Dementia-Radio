@@ -17,6 +17,8 @@
 
 // ---- CONFIG ----
 
+#define VERSION                "2"
+
 //#define WLAN_ON
 
 #define WLAN_SSID               "VK Werkstatt"
@@ -26,7 +28,7 @@
 #define FILES_MAX_SKIP          3
 #define FILES_PLAY_STARTING     0
 #define VOLUME_TICK_MS          100
-#define VOLUME_START            21
+#define VOLUME_START            10
 
 #define SWITCH_ON_TICK_MS       100
 
@@ -42,12 +44,12 @@
 #define SPI_SCK       18
 
 #define I2S_DOUT      25
-#define I2S_BCLK      27
-#define I2S_LRC       26
+#define I2S_BCLK      26
+#define I2S_LRC       27
 
 #define ADC_VOLUME    35
-#define SWITCH_ON     14
-
+#define SWITCH_ON     12
+#define SWITCH_GPIO   GPIO_NUM_12
 
 
 Audio audio;
@@ -57,7 +59,6 @@ Ticker tickerVolume;
 Ticker tickerSwitch;
 uint8_t lastVolume;
 bool deviceOn;
-
 
 
 
@@ -72,9 +73,11 @@ void setup() {
   // Serial.println("");
   Serial.begin(115200);
   Serial.println("starting setup");
+  Serial.print("program version: ");
+  Serial.println(VERSION);
 
   // configure sleep & wakeup
-  esp_sleep_enable_ext0_wakeup( GPIO_NUM_14, 1);
+  esp_sleep_enable_ext0_wakeup( SWITCH_GPIO, 1);
   esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON); // all RTC Peripherals are powered
 
   // if wakeup was caused by switch on
@@ -89,6 +92,7 @@ void setup() {
     } else {
       Serial.println(" done.");
     }
+    
   
     // try connecting to wifi
     #ifdef WLAN_ON
@@ -226,7 +230,7 @@ void onVolume() {
   
   if( (lastVolume >= volume && lastVolume-volume > 1) || (volume > lastVolume && volume-lastVolume > 1) ){
   //if( lastVolume != volume ){
-    audio.setVolume( volume );
+    //audio.setVolume( volume );
     Serial.print("new volume ");
     Serial.println(volume);
     lastVolume = volume;    
