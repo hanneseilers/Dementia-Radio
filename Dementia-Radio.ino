@@ -33,7 +33,7 @@
 #define ADC_RESOLUTION  12      // BIT
 #define ADC_MAX         4096.0  // 2 ^ADC_RESOLUTION (double!)
 
-#define FILES_MAX                200     // max. uint8_t!
+#define FILES_MAX                200     // max. uint8_t-1!
 #define FILES_ENDING            ".mp3"
 #define FILES_PLAY_COUNT_MAX     10      // max. number of files to play
 // ---- CONFIG END ----
@@ -325,7 +325,7 @@ void playNextFile(){
   Serial.print("random = ");
   Serial.println(nRandom);
 
-  while(i <= 255){
+  while(i < 255){
 
     String filename = filesList[i];
     int filenameLength = filename.length();
