@@ -25,15 +25,17 @@
 #define WLAN_PW                 "2x3m4wu3m9!"
 #define WIFI_CONNECT_MAX_TRIES  5
 
-#define FILES_MAX_SKIP          3
-#define FILES_PLAY_STARTING     0
 #define VOLUME_TICK_MS          100
-#define VOLUME_START            10
+#define VOLUME_START            5
 
 #define SWITCH_ON_TICK_MS       100
 
 #define ADC_RESOLUTION  12      // BIT
 #define ADC_MAX         4096.0  // 2 ^ADC_RESOLUTION (double!)
+
+#define FILES_MAX                200     // max. uint8_t!
+#define FILES_ENDING            ".mp3"
+#define FILES_PLAY_COUNT_MAX     10      // max. number of files to play
 // ---- CONFIG END ----
 
 
@@ -51,14 +53,19 @@
 #define SWITCH_ON     12
 #define SWITCH_GPIO   GPIO_NUM_12
 
+#define IO_LED        1
+
 
 Audio audio;
 File root;
-int nFile;
 Ticker tickerVolume;
 Ticker tickerSwitch;
 uint8_t lastVolume;
 bool deviceOn;
+
+String filesList[200];
+uint8_t nFilesLeft;
+uint8_t nFilesPlayed;
 
 
 
@@ -69,6 +76,7 @@ bool deviceOn;
 void setup() {
   deviceOn = false;
   pinMode(SWITCH_ON, INPUT);
+  digitalWrite(IO_LED, HIGH);
   
   // Serial.println("");
   Serial.begin(115200);
@@ -91,6 +99,9 @@ void setup() {
       Serial.println("[ERR]: Cannot access SD card!");
     } else {
       Serial.println(" done.");
+
+      root = SD.open("/");
+      scanFiles(root);
     }
     
   
@@ -128,8 +139,11 @@ void setup() {
 
     Serial.println("> starting.");
     Serial.flush(); 
+    randomSeed(analogRead(0));
+    digitalWrite(IO_LED, LOW);
     deviceOn = true;
-    startPlaying();    
+    nFilesPlayed = 0;
+    startPlaying();
     
     
   } else {
@@ -164,10 +178,10 @@ bool getWakeupReason(){
 
   switch(wakeup_reason){
     case ESP_SLEEP_WAKEUP_EXT0 : Serial.println("Wakeup caused by external signal using RTC_IO"); return true;
-    case ESP_SLEEP_WAKEUP_EXT1 : Serial.println("Wakeup caused by external signal using RTC_CNTL"); return true;
+    case ESP_SLEEP_WAKEUP_EXT1 : Serial.println("Wakeup caused by external signal using RTC_CNTL"); return false;
     case ESP_SLEEP_WAKEUP_TIMER : Serial.println("Wakeup caused by timer"); return false;
-    case ESP_SLEEP_WAKEUP_TOUCHPAD : Serial.println("Wakeup caused by touchpad"); return true;
-    case ESP_SLEEP_WAKEUP_ULP : Serial.println("Wakeup caused by ULP program"); return true;
+    case ESP_SLEEP_WAKEUP_TOUCHPAD : Serial.println("Wakeup caused by touchpad"); return false;
+    case ESP_SLEEP_WAKEUP_ULP : Serial.println("Wakeup caused by ULP program"); return false;
     default : Serial.printf("Wakeup was not caused by deep sleep: %d\n",wakeup_reason); break;    
   }
 
@@ -180,7 +194,6 @@ bool getWakeupReason(){
  */
 void startPlaying(){
   // play audio
-  nFile = FILES_PLAY_STARTING;
   playNextFile();
 
   // call ticker
@@ -230,7 +243,7 @@ void onVolume() {
   
   if( (lastVolume >= volume && lastVolume-volume > 1) || (volume > lastVolume && volume-lastVolume > 1) ){
   //if( lastVolume != volume ){
-    //audio.setVolume( volume );
+    audio.setVolume( volume );
     Serial.print("new volume ");
     Serial.println(volume);
     lastVolume = volume;    
@@ -252,44 +265,113 @@ void onSwitch() {
   }
 }
 
+/**
+ * Clears the files list and resets every entry to zero length
+ */
+void clearFilesList(){
+
+  for(uint8_t i=0; i<FILES_MAX; i++){
+    filesList[i] = "";
+  }
+  
+}
+
+/**
+ * Scans for files on sd card and adds them to internal list
+ */
+void scanFiles(File dir){
+
+  Serial.println("scanning SD card");
+  digitalWrite(IO_LED, HIGH);
+  
+  uint8_t i = 0;
+  while(true){
+
+    File f = dir.openNextFile();
+
+    if( !f ){
+      // no more files
+      break;
+    }
+
+    String filename = f.name();
+    if( !f.isDirectory() && filename.endsWith(FILES_ENDING) ){
+      filesList[i] = filename;
+      i++;
+    }
+    f.close();
+    
+  }
+
+  Serial.print("> found ");
+  Serial.print( i ) ;
+  Serial.println(" files");
+
+  nFilesLeft = i+1;
+  digitalWrite(IO_LED, LOW);
+  
+}
+
 /*
  * Playing next file from SD card
 */
 void playNextFile(){
-  uint8_t skip = 0;
 
-  // skip missing files
-  while( skip < FILES_MAX_SKIP ){
-    
-    String filename = "/" + String(nFile) + ".mp3";
-    Serial.println("> trying to find " + filename);
-  
-    if( !SD.exists(filename) ){
+  // search for random file
+  Serial.println("plaing next random file");
+  uint8_t nRandom = random(0, nFilesLeft-1);
+  uint8_t i = 0;
 
-      // try next file number
-      skip++;
-      nFile++;
-      Serial.println("[ERR]: no file named " + filename );
-      
-    } else {
+  Serial.print("random = ");
+  Serial.println(nRandom);
 
-      // open file
-      File entry = SD.open( filename, FILE_READ );
-      nFile++;
+  while(i <= 255){
 
-      // print file info
-      Serial.print( filename );
-      Serial.print( "\t- size[kB]: ");
-      Serial.println(entry.size() / 1024.0, DEC);
-  
-      // play file
-      audio.connecttoSD( filename );
-  
-      entry.close();
+    String filename = filesList[i];
+    int filenameLength = filename.length();
+
+    Serial.print("> checking ");
+    Serial.println(i);
+    Serial.println(filename);
+    Serial.flush();
+
+    // exit on empty string
+    if( filenameLength  < 1 ){
       break;
-    
+      Serial.println("> exit, cause of empty string");
     }
 
+    // skip used files (min. requried filname length 6, is like "/a.mp3")
+    if( filenameLength > 5 ){
+
+      // check if file is random number
+      if( nRandom == 0 ){
+        // found file > play
+        if( !SD.exists(filename) ){
+          Serial.println("[ERR]: no file named " + filename );          
+        } else {
+    
+          // open file
+          File entry = SD.open( filename, FILE_READ );
+          nFilesLeft--;
+          filesList[i] = " ";
+      
+          // play file
+          Serial.println("> found and play");
+          audio.connecttoSD( filename );
+      
+          entry.close();
+          break;
+        
+        }        
+      }
+
+      nRandom--;
+      
+    }
+
+    i++;
+    
   }
   
 }
@@ -297,9 +379,11 @@ void playNextFile(){
 /*
  * Displays general audio info
  */
+ /*
 void audio_info(const char *info){
   Serial.print("[info]: "); Serial.println(info);
 }
+*/
 
 /*
  * Displays ID3 tags infos
@@ -313,5 +397,11 @@ void audio_id3data(const char *info){  //id3 metadata
  */
 void audio_eof_mp3(const char *info){  //end of file
     Serial.print("[eof_mp3]: ");Serial.println(info);
-    playNextFile();
+    nFilesPlayed++;
+    if( nFilesLeft > 0 && nFilesPlayed < FILES_PLAY_COUNT_MAX ){
+      playNextFile();
+    } else {
+      Serial.println("played all files");
+      digitalWrite(IO_LED, HIGH);
+    }
 }
