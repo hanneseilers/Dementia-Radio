@@ -51,8 +51,8 @@
 #define I2S_LRC       27            // 26
 
 #define ADC_VOLUME    35
-#define SWITCH_ON     12            // 14
-#define SWITCH_GPIO   GPIO_NUM_12
+#define SWITCH_ON     12            // 14 use 34 in future
+#define SWITCH_GPIO   GPIO_NUM_12   // use GPIO_NUM_34 in future
 
 #define IO_LED        1
 
