@@ -2,7 +2,7 @@
  * Audio.h
  *
  *  Created on: Oct 26,2018
- *  Updated on: Feb 09,2021
+ *  Updated on: Mar 08,2021
  *      Author: Wolle (schreibfaul1)   ¯\_(ツ)_/¯
  */
 
@@ -16,6 +16,7 @@
 #include "SD_MMC.h"
 #include "SPIFFS.h"
 #include "FS.h"
+#include "FFat.h"
 #include "WiFiClientSecure.h"
 #include "driver/i2s.h"
 
@@ -62,19 +63,20 @@ class AudioBuffer {
 //
 
 public:
-    AudioBuffer();                      // constructor
-    ~AudioBuffer();                     // frees the buffer
-    size_t   init();                    // set default values
-    size_t   freeSpace();               // number of free bytes to overwrite
-    size_t   writeSpace();              // space fom writepointer to bufferend
-    size_t   bufferFilled();            // returns the number of filled bytes
-    void     bytesWritten(size_t bw);   // update writepointer
-    void     bytesWasRead(size_t br);   // update readpointer
-    uint8_t* writePtr();                // returns the current writepointer
-    uint8_t* readPtr();                 // returns the current readpointer
-    uint32_t getWritePos();             // write position relative to the beginning
-    uint32_t getReadPos();              // read position relative to the beginning
-    void     resetBuffer();             // restore defaults
+    AudioBuffer(size_t maxBlockSize = 0);       // constructor
+    ~AudioBuffer();                             // frees the buffer
+    size_t   init();                            // set default values
+    size_t   freeSpace();                       // number of free bytes to overwrite
+    size_t   writeSpace();                      // space fom writepointer to bufferend
+    size_t   bufferFilled();                    // returns the number of filled bytes
+    void     bytesWritten(size_t bw);           // update writepointer
+    void     bytesWasRead(size_t br);           // update readpointer
+    uint8_t* getWritePtr();                     // returns the current writepointer
+    uint8_t* getReadPtr();                      // returns the current readpointer
+    size_t   getMaxBlockLength();               // max length of read or write blocks
+    uint32_t getWritePos();                     // write position relative to the beginning
+    uint32_t getReadPos();                      // read position relative to the beginning
+    void     resetBuffer();                     // restore defaults
 
 protected:
     const size_t m_buffSizePSRAM = 300000; // most webstreams limit the advance to 100...300Kbytes
@@ -84,6 +86,7 @@ protected:
     size_t       m_writeSpace    = 0;
     size_t       m_dataLength    = 0;
     size_t       m_resBuffSize   = 1600; // reserved buffspace, >= one mp3 frame
+    size_t       m_maxBlockSize  = 1600;
     uint8_t*     m_buffer        = NULL;
     uint8_t*     m_writePtr      = NULL;
     uint8_t*     m_readPtr       = NULL;
@@ -97,7 +100,7 @@ class Audio : private AudioBuffer{
     AudioBuffer InBuff; // instance of input buffer
 
 public:
-    Audio(const uint8_t BCLK=27, const uint8_t LRC=26, const uint8_t DOUT=25); // #99
+    Audio(); // #99
     ~Audio();
     bool connecttoFS(fs::FS &fs, String file);
     bool connecttoSD(String sdfile);
@@ -110,6 +113,7 @@ public:
     uint32_t getSampleRate();
     uint8_t  getBitsPerSample();
     uint8_t  getChannels();
+    uint32_t getBitRate();
 
     /**
      * @brief Get the audio file duration in seconds
@@ -124,15 +128,9 @@ public:
      */
     uint32_t getAudioCurrentTime();
     bool setFilePos(uint32_t pos);
-    /**
-     * @brief audioFileSeek seeks the file in both directions
-     * 
-     * @param[in] speed
-     *      speed > 0 : fast-forward
-     *      speed < 0 : fast-rewind
-     * @return true if audio file active and speed is valid, otherwise false
-     */
-    bool audioFileSeek(const int8_t speed);
+    bool audioFileSeek(const float speed);
+    uint32_t getTotalPlayingTime();
+    bool setTimeOffset(int sec);
     bool setPinout(uint8_t BCLK, uint8_t LRC, uint8_t DOUT, int8_t DIN=I2S_PIN_NO_CHANGE);
     void stopSong();
     /**
@@ -152,7 +150,7 @@ public:
     esp_err_t i2s_mclk_pin_select(const uint8_t pin);
     uint32_t inBufferFilled(); // returns the number of stored bytes in the inputbuffer
     uint32_t inBufferFree();   // returns the number of free bytes in the inputbuffer
-    void setTone(uint8_t l_type = 0, uint16_t l_freq = 0, uint8_t r_type = 0, uint16_t r_freq = 0);
+    void setTone(int8_t gainLowPass, int8_t gainBandPass, int8_t gainHighPass);
     void setInternalDAC(bool internalDAC);
     void setI2SCommFMT_LSB(bool commFMT);
 
@@ -161,14 +159,21 @@ private:
     void initInBuff();
     void processLocalFile();
     void processWebStream();
+    void showCodecParams();
+    int  findNextSync(uint8_t* data, size_t len);
     int  sendBytes(uint8_t* data, size_t len);
     void compute_audioCurrentTime(int bd);
     void printDecodeError(int r);
+    void showID3Tag(String tag, const char* val);
+    void unicode2utf8(char* buff, uint32_t len);
     int  readWaveHeader(uint8_t* data, size_t len);
+    int  readFlacMetadata(uint8_t *data, size_t len);
     int  readID3Metadata(uint8_t* data, size_t len);
+    int  readM4AContainer(uint8_t* data, size_t len);
     bool setSampleRate(uint32_t hz);
     bool setBitsPerSample(int bits);
     bool setChannels(int channels);
+    bool setBitrate(int br);
     bool playChunk();
     bool playSample(int16_t sample[2]) ;
     bool playI2Sremains();
@@ -182,8 +187,10 @@ private:
     esp_err_t I2Sstart(uint8_t i2s_num);
     esp_err_t I2Sstop(uint8_t i2s_num);
     String urlencode(String str);
-    int16_t* IIR_filterChain(int16_t iir_in[2], bool clear = false);
-    void IIR_calculateCoefficients();
+    int16_t* IIR_filterChain0(int16_t iir_in[2], bool clear = false);
+    int16_t* IIR_filterChain1(int16_t* iir_in, bool clear = false);
+    int16_t* IIR_filterChain2(int16_t* iir_in, bool clear = false);
+    void IIR_calculateCoefficients(int8_t G1, int8_t G2, int8_t G3);
 
     // implement several function with respect to the index of string
     bool startsWith (const char* base, const char* str) { return (strstr(base, str) - base) == 0;}
@@ -203,15 +210,43 @@ private:
         }
         return result;
     }
+    int specialIndexOf (uint8_t* base, const char* str, int baselen, bool exact = false){
+        int result;  // seek for str in buffer or in header up to baselen, not nullterninated
+        if (strlen(str) > baselen) return -1; // if exact == true seekstr in buffer must have "\0" at the end
+        for (int i = 0; i < baselen - strlen(str); i++){
+            result = i;
+            for (int j = 0; j < strlen(str) + exact; j++){
+                if (*(base + i + j) != *(str + j)){
+                    result = -1;
+                    break;
+                }
+            }
+            if (result >= 0) break;
+        }
+        return result;
+    }
+    size_t bigEndian(uint8_t* base, uint8_t numBytes, uint8_t shiftLeft = 8){
+        size_t result = 0;
+        if(numBytes < 1 or numBytes > 4) return 0;
+        for (int i = 0; i < numBytes; i++) {
+                result += *(base + i) << (numBytes -i - 1) * shiftLeft;
+        }
+        return result;
+    }
 
 private:
     enum : int { APLL_AUTO = -1, APLL_ENABLE = 1, APLL_DISABLE = 0 };
     enum : int { EXTERNAL_I2S = 0, INTERNAL_DAC = 1, INTERNAL_PDM = 2 };
-    enum : int { CODEC_NONE = 0, CODEC_WAV = 1, CODEC_MP3 = 2, CODEC_AAC = 4, CODEC_FLAC = 5};
+    enum : int { CODEC_NONE, CODEC_WAV, CODEC_MP3, CODEC_AAC, CODEC_M4A, CODEC_APP, CODEC_FLAC, CODEC_OGG};
     enum : int { FORMAT_NONE = 0, FORMAT_M3U = 1, FORMAT_PLS = 2, FORMAT_ASX = 3};
     enum : int { AUDIO_NONE, AUDIO_HEADER , AUDIO_DATA, AUDIO_METADATA, AUDIO_PLAYLISTINIT,
                  AUDIO_PLAYLISTHEADER,  AUDIO_PLAYLISTDATA, AUDIO_SWM };
+    enum : int { FLAC_BEGIN = 0, FLAC_MAGIC = 1, FLAC_MBH =2, FLAC_SINFO = 3, FLAC_PADDING = 4, FLAC_APP = 5,
+                 FLAC_SEEK = 6, FLAC_VORBIS = 7, FLAC_CUESHEET = 8, FLAC_PICTURE = 9, FLAC_OKAY = 100};
+    enum : int { M4A_BEGIN = 0, M4A_FTYP = 1, M4A_CHK = 2, M4A_MOOV = 3, M4A_FREE = 4, M4A_TRAK = 5, M4A_MDAT = 6,
+                 M4A_ILST = 7, M4A_MP4A = 8, M4A_AMRDY = 99, M4A_OKAY = 100};
     typedef enum { LEFTCHANNEL=0, RIGHTCHANNEL=1 } SampleIndex;
+    typedef enum { LOWSHELF = 0, PEAKEQ = 1, HIFGSHELF =2 } FilterType;
 
     const uint8_t volumetable[22]={   0,  1,  2,  3,  4 , 6 , 8, 10, 12, 14, 17,
                                      20, 23, 27, 30 ,34, 38, 43 ,48, 52, 58, 64}; //22 elements
@@ -228,29 +263,25 @@ private:
     WiFiClient        client;       // @suppress("Abstract class cannot be instantiated")
     WiFiClientSecure  clientsecure; // @suppress("Abstract class cannot be instantiated")
     i2s_config_t      m_i2s_config; // stores values for I2S driver
-
+    i2s_pin_config_t  m_pin_config;
 
     char            chbuf[256];
     char            path[256];
     char            m_plsURL[256];                  // URL found in playlist
     char            m_lastHost[256];                // Store the last URL to a webstream
     char            m_audioName[256];               // the name of the file
-    filter_t        m_filter[2];
-    int             m_id3Size=0;                    // length id3 tag
-    int             m_LFcount;                      // Detection of end of header
+    filter_t        m_filter[3];                    // digital filters
+    size_t          m_id3Size = 0;                  // length id3 tag
+    size_t          m_wavHeaderSize = 0;
+    int             m_LFcount = 0;                  // Detection of end of header
     uint32_t        m_sampleRate=16000;
-    int             m_bytesLeft=0;
     uint32_t        m_bitRate=0;                    // current bitrate given fom decoder
-    uint32_t        m_avr_bitrate;                  // average bitrate, median computed by VBR
+    uint32_t        m_avr_bitrate = 0;              // average bitrate, median computed by VBR
     int             m_readbytes=0;                  // bytes read
     int             m_metalen=0;                    // Number of bytes in metadata
     int             m_controlCounter = 0;           // Status within readID3data() and readWaveHeader()
     int8_t          m_balance = 0;                  // -16 (mute left) ... +16 (mute right)
-    int8_t          m_DIN=0;                        // Data In, can be negative if unused (I2S_PIN_NO_CHANGE is -1)
-    uint8_t         m_rev=0;                        // revision, ID3 version
-    uint8_t         m_BCLK=0;                       // Bit Clock
-    uint8_t         m_LRC=0;                        // Left/Right Clock
-    uint8_t         m_DOUT=0;                       // Data Out
+    uint8_t         m_ID3version=0;                 // revision, ID3 version
     uint8_t         m_vol=64;                       // volume
     uint8_t         m_bitsPerSample = 16;           // bitsPerSample
     uint8_t         m_channels=2;
@@ -260,23 +291,24 @@ private:
     uint8_t         m_filterType[2];                // lowpass, highpass
     int16_t         m_outBuff[2048*2];              // [1152 * 2];          // Interleaved L/R
     int16_t         m_validSamples = 0;
-    int16_t         m_curSample;
+    int16_t         m_curSample = 0;
     uint16_t        m_st_remember = 0;              // Save hash from the last streamtitle
     uint16_t        m_datamode = 0;                 // Statemaschine
     uint32_t        m_metaint = 0;                  // Number of databytes between metadata
     uint32_t        m_totalcount = 0;               // Counter mp3 data
     uint32_t        m_chunkcount = 0 ;              // Counter for chunked transfer
-    uint32_t        m_t0;                           // store millis(), is needed for a small delay
+    uint32_t        m_t0 = 0;                       // store millis(), is needed for a small delay
     uint32_t        m_metaCount = 0;                // Bytecounter between metadata
     uint32_t        m_contentlength = 0;            // Stores the length if the stream comes from fileserver
-    uint32_t        m_bytectr = 0;                  // count received data
     uint32_t        m_bytesNotDecoded = 0;          // pictures or something else that comes with the stream
+    uint32_t        m_PlayingStartTime = 0;         // Stores the milliseconds after the start of the audio
     bool            m_f_unsync = false;             // set within ID3 tag but not used
     bool            m_f_exthdr = false;             // ID3 extended header
     bool            m_f_localfile = false ;         // Play from local mp3-file
     bool            m_f_webstream = false ;         // Play from URL
     bool            m_f_ssl = false;
     bool            m_f_running = false;
+    bool            m_f_firstCall = false;          // InitSequence for processWebstream and processLokalFile
     bool            m_f_firststream_ready = false;  // Set after connecttohost and first streamdata are available
     bool            m_f_ctseen = false;             // First line of header seen or not
     bool            m_f_chunked = false ;           // Station provides chunked transfer
@@ -291,11 +323,15 @@ private:
     bool            m_f_internalDAC = false;        // false: output vis I2S, true output via internal DAC
     uint32_t        m_audioFileDuration = 0;
     float           m_audioCurrentTime = 0;
-    float           m_filterBuff[2][2][2];          // IIR filters memory for Audio DSP
+    uint32_t        m_audioDataStart = 0;           // in bytes
+    size_t          m_audioDataSize = 0;            //
+    float           m_filterBuff[3][2][2][2];       // IIR filters memory for Audio DSP
     size_t          m_i2s_bytesWritten = 0;         // set in i2s_write() but not used
-    size_t          m_loop_point = 0;               // Point in the file where the audio data starts
     size_t          m_file_size = 0;                // size of the file
     uint16_t        m_filterFrequency[2];
+    int8_t          m_gain0 = 0;                    // cut or boost filters (EQ)
+    int8_t          m_gain1 = 0;
+    int8_t          m_gain2 = 0;
 };
 
 #endif /* AUDIO_H_ */
