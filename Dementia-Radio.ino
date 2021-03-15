@@ -34,7 +34,7 @@
 #define ADC_RESOLUTION  9      // BIT
 #define ADC_MAX         511.0  // 2 ^ADC_RESOLUTION (double!)
 
-#define FILES_MAX                200     // max. uint8_t-1!
+#define FILES_MAX                200     // max. uint8_t!
 #define FILES_ENDING            ".mp3"
 #define FILES_PLAY_COUNT_MAX     10      // max. number of files to play
 // ---- CONFIG END ----
@@ -253,8 +253,8 @@ void onVolume() {
   //if( (lastVolume >= volume && lastVolume-volume > 1) || (volume > lastVolume && volume-lastVolume > 1) ){
   if( lastVolume != volume ){
     audio.setVolume( volume );
-    //Serial.print("new volume ");
-    //Serial.println(volume);
+    Serial.print("new volume ");
+    Serial.println(volume);
     lastVolume = volume;    
   }
   
@@ -411,6 +411,7 @@ void audio_eof_mp3(const char *info){  //end of file
       playNextFile();
     } else {
       Serial.println("played all files");
-      digitalWrite(IO_LED, HIGH);
+      digitalWrite(IO_LED, LOW);
+      gotoSleep();
     }
 }
